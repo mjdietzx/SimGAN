@@ -40,9 +40,22 @@ def refiner_network(input_image_tensor):
     return models.Model(input=input_image_tensor, output=x, name='refiner')
 
 
+def discriminator_network(input_image_tensor):
+    """
+    The discriminator network, Dφ, contains 5 convolution layers and 2 max-pooling layers.
 
-def discriminator_network():
-    pass
+    :param input_image_tensor: Input tensor corresponding to an image, either real or refined.
+    :return: A model that determines whether an image is real or refined.
+    """
+    x = layers.Convolution2D(96, 3, 3, border_mode='same', subsample=(2, 2))(input_image_tensor)
+    x = layers.Convolution2D(64, 3, 3, border_mode='same', subsample=(2, 2))(x)
+    x = layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), border_mode='same')(x)
+    x = layers.Convolution2D(32, 3, 3, border_mode='same', subsample=(1, 1))(x)
+    x = layers.Convolution2D(32, 1, 1, border_mode='same', subsample=(1, 1))(x)
+    x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1))(x)
+    x = layers.Activation('softmax')(x)
+
+    return models.Model(input=input_image_tensor, output=x, name='discriminator')
 
 
 def main():
