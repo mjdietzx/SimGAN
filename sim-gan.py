@@ -1,8 +1,17 @@
+"""
+Implementation of `3.1 Appearance-based Gaze Estimation` from
+[Learning from Simulated and Unsupervised Images through Adversarial Training](https://arxiv.org/pdf/1612.07828v1.pdf).
+
+Note: Only Python 3 support currently.
+"""
+
 from keras import backend as K
 from keras import applications
 from keras import layers
 from keras import models
 from keras.preprocessing import image
+from keras.utils import np_utils
+from numpy import np
 
 
 #
@@ -12,12 +21,21 @@ img_width = 55
 img_height = 35
 img_channels = 1
 
+#
+# training params
+#
+nb_epochs = 50
+batch_size = 32
+k_d = 1  # number of discriminator updates per step
+k_g = 2  # number of generative network updates per step
+
 
 def refiner_network(input_image_tensor):
     """
-    The refiner network, Rθ, is a residual network (ResNet).
+    The refiner network, Rθ, is a residual network (ResNet). It modifies the synthetic image on a pixel level, rather
+    than holistically modifying the image content, preserving the global structure and annotations.
 
-    :param input_image_tensor: Input tensor corresponding to a synthetic image from a simulator.
+    :param input_image_tensor: Input tensor that corresponds to a synthetic image.
     :return: Output tensor that corresponds to a refined synthetic image.
     """
     def resnet_block(input_features, nb_features=64, nb_kernel_rows=3, nb_kernel_cols=3):
@@ -30,12 +48,12 @@ def refiner_network(input_image_tensor):
         :param input_features: Input tensor to ResNet block.
         :return: Output tensor from ResNet block.
         """
-        x = layers.Convolution2D(nb_features, nb_kernel_rows, nb_kernel_cols, border_mode='same')(input_features)
-        x = layers.Activation('relu')(x)
-        x = layers.Convolution2D(nb_features, nb_kernel_rows, nb_kernel_cols, border_mode='same')(x)
+        y = layers.Convolution2D(nb_features, nb_kernel_rows, nb_kernel_cols, border_mode='same')(input_features)
+        y = layers.Activation('relu')(y)
+        y = layers.Convolution2D(nb_features, nb_kernel_rows, nb_kernel_cols, border_mode='same')(y)
 
-        x = layers.merge([input_features, x], mode='sum')
-        return layers.Activation('relu')(x)
+        y = layers.merge([input_features, y], mode='sum')
+        return layers.Activation('relu')(y)
 
     # an input image of size w × h is convolved with 3 × 3 filters that output 64 feature maps
     x = layers.Convolution2D(64, 3, 3, border_mode='same')(input_image_tensor)
@@ -76,7 +94,6 @@ def adversarial_training():
     #
     synthetic_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
     refined_image_tensor = refiner_network(synthetic_image_tensor)
-
     refined_or_real_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
     discriminator_output = discriminator_network(refined_or_real_image_tensor)
 
@@ -98,7 +115,8 @@ def adversarial_training():
         :param y_pred: (discriminator's prediction of refined image, refined image tensor)
         :return: The total loss.
         """
-        delta = 0.001
+        # FIXME
+        delta = -0.001
 
         loss_real = K.mean(K.binary_crossentropy(y_pred[0], y_true[0]), axis=-1)
         loss_reg = K.multiply(delta, K.reduce_sum(K.abs(y_pred[0] - y_true[1])))
@@ -108,10 +126,38 @@ def adversarial_training():
     # compile models
     #
     refiner_model.compile(optimizer='sgd', loss=refiner_loss)
-    discriminator_model.compile(optimizer='sgd', loss='binary_crossentropy')
+    discriminator_model.compile(optimizer='sgd', loss='categorical_crossentropy')
 
     discriminator_model.trainable = False
-    combined_model.compile(optimizer='sgd', loss='binary_crossentropy')
+    combined_model.compile(optimizer='sgd', loss='categorical_crossentropy')
+
+    # the target labels for the cross-entropy loss layer are 0 for every yj and 1 for every xi
+    y_real = np_utils.to_categorical(np.zeros(shape=batch_size), nb_classes=2)
+    y_refined = np_utils.to_categorical(np.ones(shape=batch_size), nb_classes=2)
+
+    # we first train the Rθ network with just self-regularization loss for 1,000 steps
+    for _ in range(1000):
+        pass
+
+    # and Dφ for 200 steps
+    for _ in range(200):
+        pass
+
+    # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
+    for i in range(nb_epochs):
+        print('Epoch: {} of {}.'.format(i, nb_epochs))
+
+        # train the refiner
+        for _ in range(k_g):
+            # sample a mini-batch of synthetic images
+            # update θ by taking an SGD step on mini-batch loss LR(θ)
+            pass
+
+        for _ in range(k_d):
+            # sample a mini-batch of synthetic and real images
+            # refine the synthetic images w/ the current refiner
+            # update φ by taking an SGD step on mini-batch loss LD(φ)
+            pass
 
 
 def main():
