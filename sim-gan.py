@@ -1,5 +1,16 @@
+from keras import backend as K
+from keras import applications
 from keras import layers
 from keras import models
+from keras.preprocessing import image
+
+
+#
+# image dimensions
+#
+img_width = 55
+img_height = 35
+img_channels = 1
 
 
 def refiner_network(input_image_tensor):
@@ -7,7 +18,7 @@ def refiner_network(input_image_tensor):
     The refiner network, Rθ, is a residual network (ResNet).
 
     :param input_image_tensor: Input tensor corresponding to a synthetic image from a simulator.
-    :return: A model that improves the realism of synthetic images from a simulator.
+    :return: Output tensor that corresponds to a refined synthetic image.
     """
     def resnet_block(input_features, nb_features=64, nb_kernel_rows=3, nb_kernel_cols=3):
         """
@@ -37,7 +48,7 @@ def refiner_network(input_image_tensor):
     # corresponding to the refined synthetic image
     x = layers.Convolution2D(1, 1, 1, border_mode='same')(x)
 
-    return models.Model(input=input_image_tensor, output=x, name='refiner')
+    return x
 
 
 def discriminator_network(input_image_tensor):
@@ -45,7 +56,7 @@ def discriminator_network(input_image_tensor):
     The discriminator network, Dφ, contains 5 convolution layers and 2 max-pooling layers.
 
     :param input_image_tensor: Input tensor corresponding to an image, either real or refined.
-    :return: A model that determines whether an image is real or refined.
+    :return: Output tensor that corresponds to the probability of whether an image is real or refined.
     """
     x = layers.Convolution2D(96, 3, 3, border_mode='same', subsample=(2, 2))(input_image_tensor)
     x = layers.Convolution2D(64, 3, 3, border_mode='same', subsample=(2, 2))(x)
@@ -55,11 +66,56 @@ def discriminator_network(input_image_tensor):
     x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1))(x)
     x = layers.Activation('softmax')(x)
 
-    return models.Model(input=input_image_tensor, output=x, name='discriminator')
+    return x
+
+
+def adversarial_training():
+    """Adversarial training of refiner network Rθ."""
+    #
+    # define model inputs and outputs
+    #
+    synthetic_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
+    refined_image_tensor = refiner_network(synthetic_image_tensor)
+
+    refined_or_real_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
+    discriminator_output = discriminator_network(refined_or_real_image_tensor)
+
+    #
+    # define models
+    #
+    refiner_model = models.Model(input=synthetic_image_tensor, output=refined_image_tensor, name='refiner')
+    discriminator_model = models.Model(input=refined_or_real_image_tensor, output=discriminator_output, name='discriminator')
+    combined_model = models.Model(input=synthetic_image_tensor, output=discriminator_output, name='combined')
+
+    #
+    # define custom loss function for the refiner
+    #
+    def refiner_loss(y_true, y_pred):
+        """
+        LR(θ) = −log(1 − Dφ(Rθ(xi))) - λ * ||Rθ(xi) − xi||, where ||.|| is the l1 norm
+
+        :param y_true: (discriminator classifies refined image as real, synthetic image tensor)
+        :param y_pred: (discriminator's prediction of refined image, refined image tensor)
+        :return: The total loss.
+        """
+        delta = 0.001
+
+        loss_real = K.mean(K.binary_crossentropy(y_pred[0], y_true[0]), axis=-1)
+        loss_reg = K.multiply(delta, K.reduce_sum(K.abs(y_pred[0] - y_true[1])))
+        return loss_real + loss_reg
+
+    #
+    # compile models
+    #
+    refiner_model.compile(optimizer='sgd', loss=refiner_loss)
+    discriminator_model.compile(optimizer='sgd', loss='binary_crossentropy')
+
+    discriminator_model.trainable = False
+    combined_model.compile(optimizer='sgd', loss='binary_crossentropy')
 
 
 def main():
-    pass
+    adversarial_training()
 
 
 if __name__ == '__main__':
