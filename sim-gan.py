@@ -4,15 +4,21 @@ Implementation of `3.1 Appearance-based Gaze Estimation` from
 
 Note: Only Python 3 support currently.
 """
-
-from keras import backend as K
 from keras import applications
 from keras import layers
 from keras import models
+from keras import objectives
 from keras.preprocessing import image
 from keras.utils import np_utils
-from numpy import np
+import numpy as np
+import tensorflow as tf
 
+
+#
+# dataset directory paths
+#
+synthesis_eyes_dir = '/Users/mjdietzx/Downloads/SynthEyes_data'  # https://www.cl.cam.ac.uk/research/rainbow/projects/syntheseyes/
+mp_gaze_dir = ''  # https://www.mpi-inf.mpg.de/departments/computer-vision-and-multimodal-computing/research/gaze-based-human-computer-interaction/appearance-based-gaze-estimation-in-the-wild-mpiigaze/
 
 #
 # image dimensions
@@ -82,9 +88,30 @@ def discriminator_network(input_image_tensor):
     x = layers.Convolution2D(32, 3, 3, border_mode='same', subsample=(1, 1))(x)
     x = layers.Convolution2D(32, 1, 1, border_mode='same', subsample=(1, 1))(x)
     x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1))(x)
+
+    x = layers.Flatten()(x)
     x = layers.Activation('softmax')(x)
 
     return x
+
+datagen = image.ImageDataGenerator(
+    preprocessing_function=applications.xception.preprocess_input,
+    dim_ordering='tf')
+
+flow_from_directory_params = {'target_size': (img_width, img_height),
+                              'color_mode': 'grayscale' if img_channels == 1 else 'rgb',
+                              'class_mode': None,
+                              'batch_size': batch_size}
+
+synthetic_generator = datagen.flow_from_directory(
+    directory=synthesis_eyes_dir,
+    **flow_from_directory_params
+)
+
+"""real_generator = datagen.flow_from_directory(
+    directory=mp_gaze_dir,
+    **flow_from_directory_params
+)"""
 
 
 def adversarial_training():
@@ -94,19 +121,28 @@ def adversarial_training():
     #
     synthetic_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
     refined_image_tensor = refiner_network(synthetic_image_tensor)
+
     refined_or_real_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
     discriminator_output = discriminator_network(refined_or_real_image_tensor)
+
+    combined_output = discriminator_network(refiner_network(synthetic_image_tensor))
 
     #
     # define models
     #
     refiner_model = models.Model(input=synthetic_image_tensor, output=refined_image_tensor, name='refiner')
     discriminator_model = models.Model(input=refined_or_real_image_tensor, output=discriminator_output, name='discriminator')
-    combined_model = models.Model(input=synthetic_image_tensor, output=discriminator_output, name='combined')
+    combined_model = models.Model(input=synthetic_image_tensor, output=combined_output, name='combined')
 
     #
     # define custom loss function for the refiner
     #
+    def self_regularization_loss(y_true, y_pred):
+        delta = 0.001  # FIXME: need to find ideal value for this
+        loss_reg = tf.multiply(delta, tf.reduce_sum(tf.abs(y_pred - y_true)))
+
+        return loss_reg
+
     def refiner_loss(y_true, y_pred):
         """
         LR(θ) = −log(1 − Dφ(Rθ(xi))) - λ * ||Rθ(xi) − xi||, where ||.|| is the l1 norm
@@ -115,19 +151,15 @@ def adversarial_training():
         :param y_pred: (discriminator's prediction of refined image, refined image tensor)
         :return: The total loss.
         """
-        # FIXME
-        delta = -0.001
+        loss_real = objectives.binary_crossentropy(y_true[0], y_pred[0])
+        loss_reg = self_regularization_loss(y_true[1], y_pred[1])
 
-        loss_real = K.mean(K.binary_crossentropy(y_pred[0], y_true[0]), axis=-1)
-        loss_reg = K.multiply(delta, K.reduce_sum(K.abs(y_pred[0] - y_true[1])))
         return loss_real + loss_reg
 
     #
-    # compile models
+    # compile models (hold off on compiling the refiner)
     #
-    refiner_model.compile(optimizer='sgd', loss=refiner_loss)
     discriminator_model.compile(optimizer='sgd', loss='categorical_crossentropy')
-
     discriminator_model.trainable = False
     combined_model.compile(optimizer='sgd', loss='categorical_crossentropy')
 
@@ -137,11 +169,19 @@ def adversarial_training():
 
     # we first train the Rθ network with just self-regularization loss for 1,000 steps
     for _ in range(1000):
-        pass
+        refiner_model.compile(optimizer='sgd', loss=self_regularization_loss)
+
+        image_batch = synthetic_generator.next()
+        if len(image_batch) != batch_size:
+            image_batch = synthetic_generator.next()
+
+        refiner_model.train_on_batch(image_batch, image_batch)
+
+    refiner_model.compile(optimizer='sgd', loss=refiner_loss)
 
     # and Dφ for 200 steps
     for _ in range(200):
-        pass
+        discriminator_model.train_on_batch()
 
     # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
     for i in range(nb_epochs):
