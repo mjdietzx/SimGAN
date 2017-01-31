@@ -4,14 +4,25 @@ Implementation of `3.1 Appearance-based Gaze Estimation` from
 
 Note: Only Python 3 support currently.
 """
+import os
 import sys
 
 from keras import applications
 from keras import layers
 from keras import models
 from keras.preprocessing import image
+import matplotlib
 import numpy as np
 import tensorflow as tf
+
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+
+#
+# directories
+#
+path = os.path.dirname(os.path.abspath(__file__))
+cache_dir = os.path.join(path, 'cache')
 
 #
 # Temporary workarounds
@@ -32,6 +43,7 @@ nb_steps = 10000
 batch_size = 32
 k_d = 1  # number of discriminator updates per step
 k_g = 2  # number of generative network updates per step
+log_interval = 100
 
 #
 # refined image history buffer
@@ -61,6 +73,29 @@ def get_half_batch_from_image_history():
         return refined_image_history_buffer[:batch_size // 2]
     except IndexError:
         return np.zeros(shape=(0, img_height, img_width, img_channels))
+
+
+def plot_batch(synthetic_image_batch, refined_image_batch, figure_name):
+    synthetic_image_batch = np.reshape(synthetic_image_batch, newshape=(-1, img_height, img_width))
+    refined_image_batch = np.reshape(refined_image_batch, newshape=(-1, img_height, img_width))
+
+    image_batch = np.concatenate((refined_image_batch, synthetic_image_batch))
+
+    nb_rows = (batch_size // 10 + 1) * 2
+    nb_columns = 10
+
+    _, ax = plt.subplots(nb_rows, nb_columns, sharex=True, sharey=True)
+
+    for i in range(nb_rows):
+        for j in range(nb_columns):
+            try:
+                # pre-processing function, applications.xception.preprocess_input => [0.0, 1.0]
+                ax[i][j].imshow((image_batch[i * nb_columns + j] / 2.0 + 0.5))
+            except IndexError:
+                pass
+            ax[i][j].set_axis_off()
+    plt.savefig(os.path.join(cache_dir, '{}.png'.format(figure_name)), dpi=600)
+    plt.close()
 
 
 def refiner_network(input_image_tensor):
@@ -151,9 +186,9 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
     # compile models
     #
     refiner_model.compile(optimizer='adam', loss=self_regularization_loss)
-    discriminator_model.compile(optimizer='adam', loss='categorical_crossentropy')
+    discriminator_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     discriminator_model.trainable = False
-    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, 'categorical_crossentropy'])
+    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, 'categorical_crossentropy'])  # TODO: add accuracy metric
 
     #
     # data generators
@@ -191,25 +226,44 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
 
     # we first train the Rθ network with just self-regularization loss for 1,000 steps
     print('pre-training the refiner network...')
+    gen_loss = 0
+
     for i in range(1000):
-        print(i)
-        image_batch = get_image_batch(synthetic_generator)
-        refiner_model.train_on_batch(image_batch, image_batch)
+        synthetic_image_batch = get_image_batch(synthetic_generator)
+        gen_loss += refiner_model.train_on_batch(synthetic_image_batch, synthetic_image_batch)
+
+        if not i % log_interval:
+            figure_name = 'refined_image_batch_pre_train_step_{}'.format(i)
+            print('Saving batch of refined images during pre-training at step: {}.'.format(i))
+
+            synthetic_image_batch = get_image_batch(synthetic_generator)
+            plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch), figure_name)
+
+            print('Refiner model self regularization loss: {}.'.format(gen_loss / log_interval))
+            gen_loss = 0
 
     # and Dφ for 200 steps (one mini-batch for refined images, another for real)
     print('pre-training the discriminator network...')
+    disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
+
     for i in range(100):
-        print(i)
         real_image_batch = get_image_batch(real_generator)
-        discriminator_model.train_on_batch(real_image_batch, y_real)
+        disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
 
         synthetic_image_batch = get_image_batch(synthetic_generator)
         refined_image_batch = refiner_model.predict(synthetic_image_batch)
-        discriminator_model.train_on_batch(refined_image_batch, y_refined)
+        disc_loss = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
+
+    print('Discriminator model loss: {}.'.format(disc_loss / (100 * 2)))
+
+    gen_loss = np.zeros(shape=len(combined_model.metrics_names))
+    disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
 
     # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
     for i in range(nb_steps):
         print('Step: {} of {}.'.format(i, nb_steps))
+
+        # TODO: save model checkpoints
 
         # train the refiner
         for _ in range(k_g * 2):
@@ -217,7 +271,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
             synthetic_image_batch = get_image_batch(synthetic_generator)
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            combined_model.train_on_batch(synthetic_image_batch, [synthetic_image_batch, y_real])
+            np.add(combined_model.train_on_batch(synthetic_image_batch, [synthetic_image_batch, y_real]), gen_loss)
 
         for _ in range(k_d):
             # sample a mini-batch of synthetic and real images
@@ -238,8 +292,21 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
                 pass
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            discriminator_model.train_on_batch(real_image_batch, y_real)
-            discriminator_model.train_on_batch(refined_image_batch, y_refined)
+            np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
+            np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
+
+        if not i % log_interval:
+            figure_name = 'refined_image_batch_step_{}'.format(i)
+            print('Saving batch of refined images at adversarial step: {}.'.format(i))
+
+            synthetic_image_batch = get_image_batch(synthetic_generator)
+            plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch), figure_name)
+
+            print('Refiner model loss: {}.'.format(gen_loss / (log_interval * k_g)))
+            print('Discriminator model loss: {}.'.format(disc_loss / (log_interval * k_d * 2)))
+
+            gen_loss = np.zeros(shape=len(combined_model.metrics_names))
+            disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
 
 
 def main(synthesis_eyes_dir, mpii_gaze_dir):
