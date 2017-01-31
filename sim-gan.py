@@ -28,10 +28,39 @@ img_channels = 1
 #
 # training params
 #
-nb_epochs = 50
+nb_steps = 10000
 batch_size = 32
 k_d = 1  # number of discriminator updates per step
 k_g = 2  # number of generative network updates per step
+
+#
+# refined image history buffer
+#
+refined_image_history_buffer = np.zeros(shape=(0, img_height, img_width, img_channels))
+history_buffer_max_size = batch_size * 1000  # TODO: what should the size of this buffer be?
+
+
+def add_half_batch_to_image_history(half_batch_generated_images):
+    global refined_image_history_buffer
+    assert len(half_batch_generated_images) == batch_size / 2
+
+    if len(refined_image_history_buffer) < history_buffer_max_size:
+        refined_image_history_buffer = np.concatenate((refined_image_history_buffer, half_batch_generated_images))
+    elif len(refined_image_history_buffer) == history_buffer_max_size:
+        refined_image_history_buffer[:batch_size // 2] = half_batch_generated_images
+    else:
+        assert False
+
+    np.random.shuffle(refined_image_history_buffer)
+
+
+def get_half_batch_from_image_history():
+    global refined_image_history_buffer
+
+    try:
+        return refined_image_history_buffer[:batch_size // 2]
+    except IndexError:
+        return np.zeros(shape=(0, img_height, img_width, img_channels))
 
 
 def refiner_network(input_image_tensor):
@@ -68,9 +97,7 @@ def refiner_network(input_image_tensor):
 
     # the output of the last ResNet block is passed to a 1 × 1 convolutional layer producing 1 feature map
     # corresponding to the refined synthetic image
-    x = layers.Convolution2D(1, 1, 1, border_mode='same')(x)
-
-    return x
+    return layers.Convolution2D(1, 1, 1, border_mode='same')(x)
 
 
 def discriminator_network(input_image_tensor):
@@ -87,11 +114,8 @@ def discriminator_network(input_image_tensor):
     x = layers.Convolution2D(32, 1, 1, border_mode='same', subsample=(1, 1))(x)
     x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1))(x)
 
-    # x = layers.Flatten()(x)
     x = layers.Reshape((DISC_SOFTMAX_OUTPUT_DIM, ))(x)
-    x = layers.Activation('softmax', name='disc_softmax')(x)
-
-    return x
+    return layers.Activation('softmax', name='disc_softmax')(x)
 
 
 def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
@@ -124,12 +148,12 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
         return tf.multiply(delta, tf.reduce_sum(tf.abs(y_pred - y_true)))
 
     #
-    # compile models (hold off on compiling the refiner)
+    # compile models
     #
-    refiner_model.compile(optimizer='sgd', loss=self_regularization_loss)
-    discriminator_model.compile(optimizer='sgd', loss='categorical_crossentropy')
+    refiner_model.compile(optimizer='adam', loss=self_regularization_loss)
+    discriminator_model.compile(optimizer='adam', loss='categorical_crossentropy')
     discriminator_model.trainable = False
-    combined_model.compile(optimizer='sgd', loss=[self_regularization_loss, 'categorical_crossentropy'])
+    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, 'categorical_crossentropy'])
 
     #
     # data generators
@@ -167,13 +191,15 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
 
     # we first train the Rθ network with just self-regularization loss for 1,000 steps
     print('pre-training the refiner network...')
-    for _ in range(2):
+    for i in range(1000):
+        print(i)
         image_batch = get_image_batch(synthetic_generator)
         refiner_model.train_on_batch(image_batch, image_batch)
 
     # and Dφ for 200 steps (one mini-batch for refined images, another for real)
     print('pre-training the discriminator network...')
-    for _ in range(1):
+    for i in range(100):
+        print(i)
         real_image_batch = get_image_batch(real_generator)
         discriminator_model.train_on_batch(real_image_batch, y_real)
 
@@ -182,10 +208,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
         discriminator_model.train_on_batch(refined_image_batch, y_refined)
 
     # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
-    for i in range(nb_epochs):
-        print('Epoch: {} of {}.'.format(i, nb_epochs))
-
-        # TODO: for batch in epoch
+    for i in range(nb_steps):
+        print('Step: {} of {}.'.format(i, nb_steps))
 
         # train the refiner
         for _ in range(k_g * 2):
@@ -196,13 +220,22 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
             combined_model.train_on_batch(synthetic_image_batch, [synthetic_image_batch, y_real])
 
         for _ in range(k_d):
-            # TODO: history of refined images
             # sample a mini-batch of synthetic and real images
             synthetic_image_batch = get_image_batch(synthetic_generator)
             real_image_batch = get_image_batch(real_generator)
 
             # refine the synthetic images w/ the current refiner
             refined_image_batch = refiner_model.predict(synthetic_image_batch)
+
+            # use a history of refined images
+            half_batch_from_image_history = get_half_batch_from_image_history()
+            add_half_batch_to_image_history(refined_image_batch[:batch_size // 2])
+
+            try:
+                refined_image_batch[:batch_size // 2] = half_batch_from_image_history[:batch_size // 2]
+            except IndexError as e:
+                print(e)
+                pass
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
             discriminator_model.train_on_batch(real_image_batch, y_real)
@@ -214,7 +247,4 @@ def main(synthesis_eyes_dir, mpii_gaze_dir):
 
 
 if __name__ == '__main__':
-    synthesis_eyes_dir = sys.argv[1]  # '/Users/mjdietzx/Downloads/SynthEyes_data'
-    mpii_gaze_dir = sys.argv[2]  # '/Users/mjdietzx/Downloads/MPII_Gaze_Dataset'
-
-    main(synthesis_eyes_dir, mpii_gaze_dir)
+    main(sys.argv[1], sys.argv[2])
