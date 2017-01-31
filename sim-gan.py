@@ -4,21 +4,19 @@ Implementation of `3.1 Appearance-based Gaze Estimation` from
 
 Note: Only Python 3 support currently.
 """
+import sys
+
 from keras import applications
 from keras import layers
 from keras import models
-from keras import objectives
 from keras.preprocessing import image
-from keras.utils import np_utils
 import numpy as np
 import tensorflow as tf
 
-
 #
-# dataset directory paths
+# Temporary workarounds
 #
-synthesis_eyes_dir = '/Users/mjdietzx/Downloads/SynthEyes_data'  # https://www.cl.cam.ac.uk/research/rainbow/projects/syntheseyes/
-mp_gaze_dir = ''  # https://www.mpi-inf.mpg.de/departments/computer-vision-and-multimodal-computing/research/gaze-based-human-computer-interaction/appearance-based-gaze-estimation-in-the-wild-mpiigaze/
+DISC_SOFTMAX_OUTPUT_DIM = 252  # FIXME: is this correct?
 
 #
 # image dimensions
@@ -89,40 +87,22 @@ def discriminator_network(input_image_tensor):
     x = layers.Convolution2D(32, 1, 1, border_mode='same', subsample=(1, 1))(x)
     x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1))(x)
 
-    x = layers.Flatten()(x)
-    x = layers.Activation('softmax')(x)
+    # x = layers.Flatten()(x)
+    x = layers.Reshape((DISC_SOFTMAX_OUTPUT_DIM, ))(x)
+    x = layers.Activation('softmax', name='disc_softmax')(x)
 
     return x
 
-datagen = image.ImageDataGenerator(
-    preprocessing_function=applications.xception.preprocess_input,
-    dim_ordering='tf')
 
-flow_from_directory_params = {'target_size': (img_width, img_height),
-                              'color_mode': 'grayscale' if img_channels == 1 else 'rgb',
-                              'class_mode': None,
-                              'batch_size': batch_size}
-
-synthetic_generator = datagen.flow_from_directory(
-    directory=synthesis_eyes_dir,
-    **flow_from_directory_params
-)
-
-"""real_generator = datagen.flow_from_directory(
-    directory=mp_gaze_dir,
-    **flow_from_directory_params
-)"""
-
-
-def adversarial_training():
+def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
     """Adversarial training of refiner network Rθ."""
     #
     # define model inputs and outputs
     #
-    synthetic_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
+    synthetic_image_tensor = layers.Input(shape=(img_height, img_width, img_channels))
     refined_image_tensor = refiner_network(synthetic_image_tensor)
 
-    refined_or_real_image_tensor = layers.Input(shape=(img_width, img_height, img_channels))
+    refined_or_real_image_tensor = layers.Input(shape=(img_height, img_width, img_channels))
     discriminator_output = discriminator_network(refined_or_real_image_tensor)
 
     combined_output = discriminator_network(refiner_network(synthetic_image_tensor))
@@ -131,78 +111,110 @@ def adversarial_training():
     # define models
     #
     refiner_model = models.Model(input=synthetic_image_tensor, output=refined_image_tensor, name='refiner')
-    discriminator_model = models.Model(input=refined_or_real_image_tensor, output=discriminator_output, name='discriminator')
-    combined_model = models.Model(input=synthetic_image_tensor, output=combined_output, name='combined')
+    discriminator_model = models.Model(input=refined_or_real_image_tensor, output=discriminator_output,
+                                       name='discriminator')
+    combined_model = models.Model(input=synthetic_image_tensor, output=[refined_image_tensor, combined_output],
+                                  name='combined')
 
     #
-    # define custom loss function for the refiner
+    # define custom l1 loss function for the refiner
     #
     def self_regularization_loss(y_true, y_pred):
         delta = 0.001  # FIXME: need to find ideal value for this
-        loss_reg = tf.multiply(delta, tf.reduce_sum(tf.abs(y_pred - y_true)))
-
-        return loss_reg
-
-    def refiner_loss(y_true, y_pred):
-        """
-        LR(θ) = −log(1 − Dφ(Rθ(xi))) - λ * ||Rθ(xi) − xi||, where ||.|| is the l1 norm
-
-        :param y_true: (discriminator classifies refined image as real, synthetic image tensor)
-        :param y_pred: (discriminator's prediction of refined image, refined image tensor)
-        :return: The total loss.
-        """
-        loss_real = objectives.binary_crossentropy(y_true[0], y_pred[0])
-        loss_reg = self_regularization_loss(y_true[1], y_pred[1])
-
-        return loss_real + loss_reg
+        return tf.multiply(delta, tf.reduce_sum(tf.abs(y_pred - y_true)))
 
     #
     # compile models (hold off on compiling the refiner)
     #
+    refiner_model.compile(optimizer='sgd', loss=self_regularization_loss)
     discriminator_model.compile(optimizer='sgd', loss='categorical_crossentropy')
     discriminator_model.trainable = False
-    combined_model.compile(optimizer='sgd', loss='categorical_crossentropy')
+    combined_model.compile(optimizer='sgd', loss=[self_regularization_loss, 'categorical_crossentropy'])
+
+    #
+    # data generators
+    #
+    datagen = image.ImageDataGenerator(
+        preprocessing_function=applications.xception.preprocess_input,
+        dim_ordering='tf')
+
+    flow_from_directory_params = {'target_size': (img_height, img_width),
+                                  'color_mode': 'grayscale' if img_channels == 1 else 'rgb',
+                                  'class_mode': None,
+                                  'batch_size': batch_size}
+
+    synthetic_generator = datagen.flow_from_directory(
+        directory=synthesis_eyes_dir,
+        **flow_from_directory_params
+    )
+
+    real_generator = datagen.flow_from_directory(
+        directory=mpii_gaze_dir,
+        **flow_from_directory_params
+    )
+
+    def get_image_batch(generator):
+        """keras generators may generate an incomplete batch for the last batch"""
+        img_batch = generator.next()
+        if len(img_batch) != batch_size:
+            img_batch = generator.next()
+
+        return img_batch
 
     # the target labels for the cross-entropy loss layer are 0 for every yj and 1 for every xi
-    y_real = np_utils.to_categorical(np.zeros(shape=batch_size), nb_classes=2)
-    y_refined = np_utils.to_categorical(np.ones(shape=batch_size), nb_classes=2)
+    y_real = np.zeros(shape=(batch_size, DISC_SOFTMAX_OUTPUT_DIM))
+    y_refined = np.ones(shape=(batch_size, DISC_SOFTMAX_OUTPUT_DIM))
 
     # we first train the Rθ network with just self-regularization loss for 1,000 steps
-    for _ in range(1000):
-        refiner_model.compile(optimizer='sgd', loss=self_regularization_loss)
-
-        image_batch = synthetic_generator.next()
-        if len(image_batch) != batch_size:
-            image_batch = synthetic_generator.next()
-
+    print('pre-training the refiner network...')
+    for _ in range(2):
+        image_batch = get_image_batch(synthetic_generator)
         refiner_model.train_on_batch(image_batch, image_batch)
 
-    refiner_model.compile(optimizer='sgd', loss=refiner_loss)
+    # and Dφ for 200 steps (one mini-batch for refined images, another for real)
+    print('pre-training the discriminator network...')
+    for _ in range(1):
+        real_image_batch = get_image_batch(real_generator)
+        discriminator_model.train_on_batch(real_image_batch, y_real)
 
-    # and Dφ for 200 steps
-    for _ in range(200):
-        discriminator_model.train_on_batch()
+        synthetic_image_batch = get_image_batch(synthetic_generator)
+        refined_image_batch = refiner_model.predict(synthetic_image_batch)
+        discriminator_model.train_on_batch(refined_image_batch, y_refined)
 
     # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
     for i in range(nb_epochs):
         print('Epoch: {} of {}.'.format(i, nb_epochs))
 
+        # TODO: for batch in epoch
+
         # train the refiner
-        for _ in range(k_g):
+        for _ in range(k_g * 2):
             # sample a mini-batch of synthetic images
+            synthetic_image_batch = get_image_batch(synthetic_generator)
+
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            pass
+            combined_model.train_on_batch(synthetic_image_batch, [synthetic_image_batch, y_real])
 
         for _ in range(k_d):
+            # TODO: history of refined images
             # sample a mini-batch of synthetic and real images
+            synthetic_image_batch = get_image_batch(synthetic_generator)
+            real_image_batch = get_image_batch(real_generator)
+
             # refine the synthetic images w/ the current refiner
+            refined_image_batch = refiner_model.predict(synthetic_image_batch)
+
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            pass
+            discriminator_model.train_on_batch(real_image_batch, y_real)
+            discriminator_model.train_on_batch(refined_image_batch, y_refined)
 
 
-def main():
-    adversarial_training()
+def main(synthesis_eyes_dir, mpii_gaze_dir):
+    adversarial_training(synthesis_eyes_dir, mpii_gaze_dir)
 
 
 if __name__ == '__main__':
-    main()
+    synthesis_eyes_dir = sys.argv[1]  # '/Users/mjdietzx/Downloads/SynthEyes_data'
+    mpii_gaze_dir = sys.argv[2]  # '/Users/mjdietzx/Downloads/MPII_Gaze_Dataset'
+
+    main(synthesis_eyes_dir, mpii_gaze_dir)
