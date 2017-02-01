@@ -255,6 +255,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
             print('Refiner model self regularization loss: {}.'.format(gen_loss / log_interval))
             gen_loss = np.zeros(shape=len(refiner_model.metrics_names))
 
+    refiner_model.save(os.path.join(cache_dir, 'refiner_model_pre_trained.h5'))
+
     # and Dφ for 200 steps (one mini-batch for refined images, another for real)
     print('pre-training the discriminator network...')
     disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
@@ -266,6 +268,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
         synthetic_image_batch = get_image_batch(synthetic_generator)
         refined_image_batch = refiner_model.predict(synthetic_image_batch)
         disc_loss = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
+
+    discriminator_model.save(os.path.join(cache_dir, 'discriminator_model_pre_trained.h5'))
 
     # hard-coded for now
     print('Discriminator model loss: {}.'.format(disc_loss / (100 * 2)))
@@ -299,7 +303,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
 
             try:
                 refined_image_batch[:batch_size // 2] = half_batch_from_image_history[:batch_size // 2]
-            except IndexError as e:
+            except IndexError and ValueError as e:
                 print(e)
                 pass
 
@@ -323,7 +327,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
             disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
 
             # save model checkpoints
-            model_checkpoint_base_name = '{}_model_step_{}'
+            model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_step_{}')
             refiner_model.save(model_checkpoint_base_name.format('refiner', i))
             discriminator_model.save(model_checkpoint_base_name.format('discriminator', i))
 

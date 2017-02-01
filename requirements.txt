@@ -1,0 +1,4 @@
+git+https://github.com/fchollet/keras.git
+matplotlib
+numpy
+tensorflow
