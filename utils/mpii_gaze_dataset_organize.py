@@ -1,3 +1,9 @@
+"""
+This script was used to organize mpii_gaze_dataset into something usable.
+It is provided as-is and is kind of hacky but better than nothing...
+
+"""
+
 import glob
 import os
 import uuid
