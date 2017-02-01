@@ -287,7 +287,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
             synthetic_image_batch = get_image_batch(synthetic_generator)
 
             # update θ by taking an SGD step on mini-batch loss LR(θ)
-            np.add(combined_model.train_on_batch(synthetic_image_batch, [synthetic_image_batch, y_real]), combined_loss)
+            combined_loss = np.add(combined_model.train_on_batch(synthetic_image_batch,
+                                                                 [synthetic_image_batch, y_real]), combined_loss)
 
         for _ in range(k_d):
             # sample a mini-batch of synthetic and real images
@@ -308,8 +309,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
                 pass
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
-            np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
+            disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
+            disc_loss = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
 
         if not i % log_interval:
             # plot batch of refined images w/ current refiner
