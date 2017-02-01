@@ -2,7 +2,9 @@
 Keras implementation of Apple's [Learning from Simulated and Unsupervised Images through Adversarial Training](https://arxiv.org/pdf/1612.07828v1.pdf)
 
 ## Running
-> python3 sim-gan.py PATH_TO_SYNTHESEYES_DATASET PATH_TO_MPII_GAZE_DATASET
+```python
+python3 sim-gan.py PATH_TO_SYNTHESEYES_DATASET PATH_TO_MPII_GAZE_DATASET
+```
 
 In apple's paper they use [Unity Eyes](http://www.cl.cam.ac.uk/research/rainbow/projects/unityeyes/) to generate ~1.2 million synthetic images. I am on mac though so I just used the easily available [SynthesEyes Dataset](https://www.cl.cam.ac.uk/research/rainbow/projects/syntheseyes/). This is small (only around ~11,000 images) so it would be much better if someone could generate a larger dataset w/ [Unity Eyes](http://www.cl.cam.ac.uk/research/rainbow/projects/unityeyes/) and share it on s3.
 
