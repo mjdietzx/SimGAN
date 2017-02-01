@@ -11,14 +11,12 @@ from keras import applications
 from keras import layers
 from keras import models
 from keras.preprocessing import image
-import matplotlib
 import numpy as np
 import tensorflow as tf
 
 from utils.image_history_buffer import ImageHistoryBuffer
+from utils import plot_images
 
-matplotlib.use('Agg')
-from matplotlib import pyplot as plt
 
 #
 # directories
@@ -46,37 +44,6 @@ batch_size = 32
 k_d = 1  # number of discriminator updates per step
 k_g = 2  # number of generative network updates per step
 log_interval = 100
-
-
-def plot_batch(synthetic_image_batch, refined_image_batch, figure_name):
-    """
-    Generate a plot of `batch_size` refined/synthetic images (refined_image_0, synthetic_image_0, ..., refined_image_n).
-
-    :param synthetic_image_batch: Batch of synthetic images used to generate the refined images.
-    :param refined_image_batch: Corresponding batch of refined images.
-    :param figure_name: Name that plot will be saved with.
-    """
-    synthetic_image_batch = np.reshape(synthetic_image_batch, newshape=(-1, img_height, img_width))
-    refined_image_batch = np.reshape(refined_image_batch, newshape=(-1, img_height, img_width))
-
-    image_batch = np.concatenate((refined_image_batch, synthetic_image_batch))
-
-    nb_rows = batch_size // 10 + 1
-    nb_columns = 10 * 2
-
-    _, ax = plt.subplots(nb_rows, nb_columns, sharex=True, sharey=True)
-
-    for i in range(nb_rows):
-        for j in range(0, nb_columns, 2):
-            try:
-                # pre-processing function, applications.xception.preprocess_input => [0.0, 1.0]
-                ax[i][j].imshow((image_batch[i * nb_columns + j] / 2.0 + 0.5))
-                ax[i][j + 1].imshow((image_batch[i * nb_columns + j + batch_size] / 2.0 + 0.5))
-            except IndexError:
-                pass
-            ax[i][j].set_axis_off()
-    plt.savefig(os.path.join(cache_dir, '{}.png'.format(figure_name)), dpi=600)
-    plt.close()
 
 
 def refiner_network(input_image_tensor):
@@ -220,11 +187,12 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
 
             # log every `log_interval` steps
             if not i % log_interval:
-                figure_name = 'refined_image_batch_pre_train_step_{}'.format(i)
+                figure_name = 'refined_image_batch_pre_train_step_{}.png'.format(i)
                 print('Saving batch of refined images during pre-training at step: {}.'.format(i))
 
                 synthetic_image_batch = get_image_batch(synthetic_generator)
-                plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch), figure_name)
+                plot_images.plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch),
+                                       os.path.join(cache_dir, figure_name))
 
                 print('Refiner model self regularization loss: {}.'.format(gen_loss / log_interval))
                 gen_loss = np.zeros(shape=len(refiner_model.metrics_names))
@@ -292,11 +260,12 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
 
         if not i % log_interval:
             # plot batch of refined images w/ current refiner
-            figure_name = 'refined_image_batch_step_{}'.format(i)
+            figure_name = 'refined_image_batch_step_{}.png'.format(i)
             print('Saving batch of refined images at adversarial step: {}.'.format(i))
 
             synthetic_image_batch = get_image_batch(synthetic_generator)
-            plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch), figure_name)
+            plot_images.plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch),
+                                   os.path.join(cache_dir, figure_name))
 
             # log loss summary
             print('Refiner model loss: {}.'.format(combined_loss / (log_interval * k_g * 2)))
