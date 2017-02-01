@@ -15,6 +15,8 @@ import matplotlib
 import numpy as np
 import tensorflow as tf
 
+from utils.image_history_buffer import ImageHistoryBuffer
+
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
@@ -44,35 +46,6 @@ batch_size = 32
 k_d = 1  # number of discriminator updates per step
 k_g = 2  # number of generative network updates per step
 log_interval = 100
-
-#
-# refined image history buffer
-#
-refined_image_history_buffer = np.zeros(shape=(0, img_height, img_width, img_channels))
-history_buffer_max_size = batch_size * 1000  # TODO: what should the size of this buffer be?
-
-
-def add_half_batch_to_image_history(half_batch_generated_images):
-    global refined_image_history_buffer
-    assert len(half_batch_generated_images) == batch_size / 2
-
-    if len(refined_image_history_buffer) < history_buffer_max_size:
-        refined_image_history_buffer = np.concatenate((refined_image_history_buffer, half_batch_generated_images))
-    elif len(refined_image_history_buffer) == history_buffer_max_size:
-        refined_image_history_buffer[:batch_size // 2] = half_batch_generated_images
-    else:
-        assert False
-
-    np.random.shuffle(refined_image_history_buffer)
-
-
-def get_half_batch_from_image_history():
-    global refined_image_history_buffer
-
-    try:
-        return refined_image_history_buffer[:batch_size // 2]
-    except IndexError:
-        return np.zeros(shape=(0, img_height, img_width, img_channels))
 
 
 def plot_batch(synthetic_image_batch, refined_image_batch, figure_name):
@@ -280,6 +253,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     else:
         discriminator_model.load_weights(discriminator_model_path)
 
+    image_history_buffer = ImageHistoryBuffer((0, img_height, img_width, img_channels), batch_size * 1000, batch_size)
+
     combined_loss = np.zeros(shape=len(combined_model.metrics_names))
     disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
 
@@ -305,14 +280,11 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
             refined_image_batch = refiner_model.predict(synthetic_image_batch)
 
             # use a history of refined images
-            half_batch_from_image_history = get_half_batch_from_image_history()
-            add_half_batch_to_image_history(refined_image_batch[:batch_size // 2])
+            half_batch_from_image_history = image_history_buffer.get_from_image_history_buffer()
+            image_history_buffer.add_to_image_history_buffer(refined_image_batch)
 
-            try:
-                refined_image_batch[:batch_size // 2] = half_batch_from_image_history[:batch_size // 2]
-            except IndexError and ValueError as e:
-                print(e)
-                pass
+            if len(half_batch_from_image_history):
+                refined_image_batch[:batch_size // 2] = half_batch_from_image_history
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
             disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
