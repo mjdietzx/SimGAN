@@ -161,7 +161,7 @@ def discriminator_network(input_image_tensor):
     return layers.Activation('softmax', name='disc_softmax')(x)
 
 
-def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
+def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=None, discriminator_model_path=None):
     """Adversarial training of refiner network Rθ and discriminator network Dφ."""
     #
     # define model input and output tensors
@@ -236,43 +236,49 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
     y_real = np.zeros(shape=(batch_size, DISC_SOFTMAX_OUTPUT_DIM))
     y_refined = np.ones(shape=(batch_size, DISC_SOFTMAX_OUTPUT_DIM))
 
-    # we first train the Rθ network with just self-regularization loss for 1,000 steps
-    print('pre-training the refiner network...')
-    gen_loss = np.zeros(shape=len(refiner_model.metrics_names))
+    if not refiner_model_path:
+        # we first train the Rθ network with just self-regularization loss for 1,000 steps
+        print('pre-training the refiner network...')
+        gen_loss = np.zeros(shape=len(refiner_model.metrics_names))
 
-    for i in range(1000):
-        synthetic_image_batch = get_image_batch(synthetic_generator)
-        gen_loss = np.add(refiner_model.train_on_batch(synthetic_image_batch, synthetic_image_batch), gen_loss)
+        for i in range(1000):
+            synthetic_image_batch = get_image_batch(synthetic_generator)
+            gen_loss = np.add(refiner_model.train_on_batch(synthetic_image_batch, synthetic_image_batch), gen_loss)
 
-        # log every `log_interval` steps
-        if not i % log_interval:
-            figure_name = 'refined_image_batch_pre_train_step_{}'.format(i)
-            print('Saving batch of refined images during pre-training at step: {}.'.format(i))
+            # log every `log_interval` steps
+            if not i % log_interval:
+                figure_name = 'refined_image_batch_pre_train_step_{}'.format(i)
+                print('Saving batch of refined images during pre-training at step: {}.'.format(i))
+
+                synthetic_image_batch = get_image_batch(synthetic_generator)
+                plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch), figure_name)
+
+                print('Refiner model self regularization loss: {}.'.format(gen_loss / log_interval))
+                gen_loss = np.zeros(shape=len(refiner_model.metrics_names))
+
+        refiner_model.save(os.path.join(cache_dir, 'refiner_model_pre_trained.h5'))
+    else:
+        refiner_model.load_weights(refiner_model_path)
+
+    if not discriminator_model_path:
+        # and Dφ for 200 steps (one mini-batch for refined images, another for real)
+        print('pre-training the discriminator network...')
+        disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
+
+        for i in range(100):
+            real_image_batch = get_image_batch(real_generator)
+            disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
 
             synthetic_image_batch = get_image_batch(synthetic_generator)
-            plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch), figure_name)
+            refined_image_batch = refiner_model.predict(synthetic_image_batch)
+            disc_loss = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
 
-            print('Refiner model self regularization loss: {}.'.format(gen_loss / log_interval))
-            gen_loss = np.zeros(shape=len(refiner_model.metrics_names))
+        discriminator_model.save(os.path.join(cache_dir, 'discriminator_model_pre_trained.h5'))
 
-    refiner_model.save(os.path.join(cache_dir, 'refiner_model_pre_trained.h5'))
-
-    # and Dφ for 200 steps (one mini-batch for refined images, another for real)
-    print('pre-training the discriminator network...')
-    disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
-
-    for i in range(100):
-        real_image_batch = get_image_batch(real_generator)
-        disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
-
-        synthetic_image_batch = get_image_batch(synthetic_generator)
-        refined_image_batch = refiner_model.predict(synthetic_image_batch)
-        disc_loss = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
-
-    discriminator_model.save(os.path.join(cache_dir, 'discriminator_model_pre_trained.h5'))
-
-    # hard-coded for now
-    print('Discriminator model loss: {}.'.format(disc_loss / (100 * 2)))
+        # hard-coded for now
+        print('Discriminator model loss: {}.'.format(disc_loss / (100 * 2)))
+    else:
+        discriminator_model.load_weights(discriminator_model_path)
 
     combined_loss = np.zeros(shape=len(combined_model.metrics_names))
     disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
@@ -333,10 +339,10 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
             discriminator_model.save(model_checkpoint_base_name.format('discriminator', i))
 
 
-def main(synthesis_eyes_dir, mpii_gaze_dir):
-    adversarial_training(synthesis_eyes_dir, mpii_gaze_dir)
+def main(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path, discriminator_model_path):
+    adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path, discriminator_model_path)
 
 
 if __name__ == '__main__':
-    # TODO: allow loading of model checkpoints and starting training from previous state
-    main(sys.argv[1], sys.argv[2])
+    # TODO: if pre-trained models are passed in, we don't take the steps they've been trained for into account
+    main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
