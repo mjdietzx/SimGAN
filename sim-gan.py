@@ -197,7 +197,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
     refiner_model.compile(optimizer='adam', loss=self_regularization_loss)
     discriminator_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     discriminator_model.trainable = False
-    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, 'categorical_crossentropy'])  # TODO: add accuracy metric
+    # TODO: add accuracy metric for `combined_output`
+    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, 'categorical_crossentropy'])
 
     #
     # data generators
@@ -276,8 +277,6 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
     for i in range(nb_steps):
         print('Step: {} of {}.'.format(i, nb_steps))
 
-        # TODO: save model checkpoints
-
         # train the refiner
         for _ in range(k_g * 2):
             # sample a mini-batch of synthetic images
@@ -309,17 +308,24 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir):
             np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
 
         if not i % log_interval:
+            # plot batch of refined images w/ current refiner
             figure_name = 'refined_image_batch_step_{}'.format(i)
             print('Saving batch of refined images at adversarial step: {}.'.format(i))
 
             synthetic_image_batch = get_image_batch(synthetic_generator)
             plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch), figure_name)
 
+            # log loss summary
             print('Refiner model loss: {}.'.format(combined_loss / (log_interval * k_g * 2)))
             print('Discriminator model loss: {}.'.format(disc_loss / (log_interval * k_d * 2)))
 
             combined_loss = np.zeros(shape=len(combined_model.metrics_names))
             disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
+
+            # save model checkpoints
+            model_checkpoint_base_name = '{}_model_step_{}'
+            refiner_model.save(model_checkpoint_base_name.format('refiner', i))
+            discriminator_model.save(model_checkpoint_base_name.format('discriminator', i))
 
 
 def main(synthesis_eyes_dir, mpii_gaze_dir):
@@ -327,4 +333,5 @@ def main(synthesis_eyes_dir, mpii_gaze_dir):
 
 
 if __name__ == '__main__':
+    # TODO: allow loading of model checkpoints and starting training from previous state
     main(sys.argv[1], sys.argv[2])
