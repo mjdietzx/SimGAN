@@ -221,11 +221,13 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     else:
         discriminator_model.load_weights(discriminator_model_path)
 
+    # TODO: what is the ideal size for the image history buffer?
     image_history_buffer = ImageHistoryBuffer((0, img_height, img_width, img_channels), batch_size * 1000, batch_size)
 
     combined_loss = np.zeros(shape=len(combined_model.metrics_names))
     disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
 
+    # TODO: I think there is a problem w/ the disc's local adversarial loss
     # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
     for i in range(nb_steps):
         print('Step: {} of {}.'.format(i, nb_steps))
