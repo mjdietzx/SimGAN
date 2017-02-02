@@ -4,6 +4,7 @@ Implementation of `3.1 Appearance-based Gaze Estimation` from
 
 Note: Only Python 3 support currently.
 """
+
 import os
 import sys
 
@@ -23,11 +24,6 @@ from utils import plot_images
 #
 path = os.path.dirname(os.path.abspath(__file__))
 cache_dir = os.path.join(path, 'cache')
-
-#
-# Temporary workarounds
-#
-DISC_SOFTMAX_OUTPUT_DIM = 252  # FIXME: is this correct?
 
 #
 # image dimensions
@@ -97,8 +93,9 @@ def discriminator_network(input_image_tensor):
     x = layers.Convolution2D(32, 1, 1, border_mode='same', subsample=(1, 1), activation='relu')(x)
     x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1), activation='relu')(x)
 
-    x = layers.Reshape((DISC_SOFTMAX_OUTPUT_DIM, ))(x)
-    return layers.Activation('softmax', name='disc_softmax')(x)
+    # here one feature map corresponds to `is_real` and the other to `is_refined`,
+    # and the custom loss function is then `tf.nn.softmax_cross_entropy_with_logits`
+    return layers.Reshape((-1, 2))(x)
 
 
 def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=None, discriminator_model_path=None):
@@ -124,6 +121,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     combined_model = models.Model(input=synthetic_image_tensor, output=[refined_image_tensor, combined_output],
                                   name='combined')
 
+    discriminator_model_output_shape = discriminator_model.output_shape
+
     #
     # define custom l1 loss function for the refiner
     #
@@ -132,13 +131,32 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
         return tf.multiply(delta, tf.reduce_sum(tf.abs(y_pred - y_true)))
 
     #
+    # define custom local adversarial loss (softmax for each image section) for the discriminator
+    #
+    # TODO: there is probably a better way to do this in tensorflow
+    def local_adversarial_loss(y_true, y_pred):
+        average_loss = tf.Variable(0, dtype=tf.float32)
+
+        y_true_list = tf.unpack(y_true, num=batch_size)
+        y_pred_list = tf.unpack(y_pred, num=batch_size)
+
+        # for each true local labels, predicted local labels in the batch
+        for y_t, y_p in zip(y_true_list, y_pred_list):
+            # the adversarial loss function is the sum of the cross-entropy losses over the local patches
+            for y_t_local, y_p_local in zip(tf.unpack(y_t, num=discriminator_model_output_shape[1]),
+                                            tf.unpack(y_p, num=discriminator_model_output_shape[1])):
+                average_loss = tf.add(tf.nn.softmax_cross_entropy_with_logits(labels=y_t_local, logits=y_p_local),
+                                      average_loss)
+
+        return tf.div(average_loss, batch_size * discriminator_model_output_shape[1])
+
+    #
     # compile models
     #
     refiner_model.compile(optimizer='adam', loss=self_regularization_loss)
-    discriminator_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    discriminator_model.compile(optimizer='adam', loss=local_adversarial_loss)
     discriminator_model.trainable = False
-    # TODO: add accuracy metric for `combined_output`
-    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, 'categorical_crossentropy'])
+    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, local_adversarial_loss])
 
     #
     # data generators
@@ -173,8 +191,10 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
         return img_batch
 
     # the target labels for the cross-entropy loss layer are 0 for every yj (real) and 1 for every xi (refined)
-    y_real = np.zeros(shape=(batch_size, DISC_SOFTMAX_OUTPUT_DIM))
-    y_refined = np.ones(shape=(batch_size, DISC_SOFTMAX_OUTPUT_DIM))
+    y_real = np.reshape(np.array([1.0, 0.0] * batch_size * discriminator_model_output_shape[1]),
+                        (batch_size, discriminator_model_output_shape[1], 2))
+    y_refined = np.reshape(np.array([0.0, 1.0] * batch_size * discriminator_model_output_shape[1]),
+                           (batch_size, discriminator_model_output_shape[1], 2))
 
     if not refiner_model_path:
         # we first train the Rθ network with just self-regularization loss for 1,000 steps
@@ -206,7 +226,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
         print('pre-training the discriminator network...')
         disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
 
-        for i in range(100):
+        for _ in range(100):
             real_image_batch = get_image_batch(real_generator)
             disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
 
