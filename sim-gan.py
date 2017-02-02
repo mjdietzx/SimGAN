@@ -11,6 +11,7 @@ import sys
 from keras import applications
 from keras import layers
 from keras import models
+from keras import optimizers
 from keras.preprocessing import image
 import numpy as np
 import tensorflow as tf
@@ -36,7 +37,7 @@ img_channels = 1
 # training params
 #
 nb_steps = 10000
-batch_size = 32
+batch_size = 512
 k_d = 1  # number of discriminator updates per step
 k_g = 2  # number of generative network updates per step
 log_interval = 100
@@ -153,10 +154,12 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     #
     # compile models
     #
-    refiner_model.compile(optimizer='adam', loss=self_regularization_loss)
-    discriminator_model.compile(optimizer='adam', loss=local_adversarial_loss)
+    sgd = optimizers.SGD(lr=0.001)
+
+    refiner_model.compile(optimizer=sgd, loss=self_regularization_loss)
+    discriminator_model.compile(optimizer=sgd, loss=local_adversarial_loss)
     discriminator_model.trainable = False
-    combined_model.compile(optimizer='adam', loss=[self_regularization_loss, local_adversarial_loss])
+    combined_model.compile(optimizer=sgd, loss=[self_regularization_loss, local_adversarial_loss])
 
     #
     # data generators
@@ -301,7 +304,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
             disc_loss_refined = np.zeros(shape=len(discriminator_model.metrics_names))
 
             # save model checkpoints
-            model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_step_{}')
+            model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_step_{}.h5')
             refiner_model.save(model_checkpoint_base_name.format('refiner', i))
             discriminator_model.save(model_checkpoint_base_name.format('discriminator', i))
 
