@@ -132,8 +132,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
 
     #
     # define custom local adversarial loss (softmax for each image section) for the discriminator
-    #
     # TODO: there is probably a better way to do this in tensorflow
+    #
     def local_adversarial_loss(y_true, y_pred):
         average_loss = tf.Variable(0, dtype=tf.float32)
 
@@ -245,7 +245,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     image_history_buffer = ImageHistoryBuffer((0, img_height, img_width, img_channels), batch_size * 1000, batch_size)
 
     combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-    disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
+    disc_loss_real = np.zeros(shape=len(discriminator_model.metrics_names))
+    disc_loss_refined = np.zeros(shape=len(discriminator_model.metrics_names))
 
     # TODO: I think there is a problem w/ the disc's local adversarial loss
     # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
@@ -277,8 +278,9 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
                 refined_image_batch[:batch_size // 2] = half_batch_from_image_history
 
             # update φ by taking an SGD step on mini-batch loss LD(φ)
-            disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
-            disc_loss = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
+            disc_loss_real = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss_real)
+            disc_loss_refined = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined),
+                                       disc_loss_refined)
 
         if not i % log_interval:
             # plot batch of refined images w/ current refiner
@@ -291,10 +293,12 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
 
             # log loss summary
             print('Refiner model loss: {}.'.format(combined_loss / (log_interval * k_g * 2)))
-            print('Discriminator model loss: {}.'.format(disc_loss / (log_interval * k_d * 2)))
+            print('Discriminator model loss real: {}.'.format(disc_loss_real / (log_interval * k_d * 2)))
+            print('Discriminator model loss refined: {}.'.format(disc_loss_refined / (log_interval * k_d * 2)))
 
             combined_loss = np.zeros(shape=len(combined_model.metrics_names))
-            disc_loss = np.zeros(shape=len(discriminator_model.metrics_names))
+            disc_loss_real = np.zeros(shape=len(discriminator_model.metrics_names))
+            disc_loss_refined = np.zeros(shape=len(discriminator_model.metrics_names))
 
             # save model checkpoints
             model_checkpoint_base_name = os.path.join(cache_dir, '{}_model_step_{}')
