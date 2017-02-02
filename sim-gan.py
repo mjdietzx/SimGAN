@@ -72,7 +72,7 @@ def refiner_network(input_image_tensor):
         return layers.Activation('relu')(y)
 
     # an input image of size w × h is convolved with 3 × 3 filters that output 64 feature maps
-    x = layers.Convolution2D(64, 3, 3, border_mode='same')(input_image_tensor)
+    x = layers.Convolution2D(64, 3, 3, border_mode='same', activation='relu')(input_image_tensor)
 
     # the output is passed through 4 ResNet blocks
     for i in range(4):
@@ -80,7 +80,7 @@ def refiner_network(input_image_tensor):
 
     # the output of the last ResNet block is passed to a 1 × 1 convolutional layer producing 1 feature map
     # corresponding to the refined synthetic image
-    return layers.Convolution2D(1, 1, 1, border_mode='same')(x)
+    return layers.Convolution2D(1, 1, 1, border_mode='same', activation='tanh')(x)
 
 
 def discriminator_network(input_image_tensor):
@@ -90,12 +90,12 @@ def discriminator_network(input_image_tensor):
     :param input_image_tensor: Input tensor corresponding to an image, either real or refined.
     :return: Output tensor that corresponds to the probability of whether an image is real or refined.
     """
-    x = layers.Convolution2D(96, 3, 3, border_mode='same', subsample=(2, 2))(input_image_tensor)
-    x = layers.Convolution2D(64, 3, 3, border_mode='same', subsample=(2, 2))(x)
-    x = layers.MaxPooling2D(pool_size=(3, 3), strides=(1, 1), border_mode='same')(x)
-    x = layers.Convolution2D(32, 3, 3, border_mode='same', subsample=(1, 1))(x)
-    x = layers.Convolution2D(32, 1, 1, border_mode='same', subsample=(1, 1))(x)
-    x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1))(x)
+    x = layers.Convolution2D(96, 3, 3, border_mode='same', subsample=(2, 2), activation='relu')(input_image_tensor)
+    x = layers.Convolution2D(64, 3, 3, border_mode='same', subsample=(2, 2), activation='relu')(x)
+    x = layers.MaxPooling2D(pool_size=(3, 3), border_mode='same', strides=(1, 1))(x)
+    x = layers.Convolution2D(32, 3, 3, border_mode='same', subsample=(1, 1), activation='relu')(x)
+    x = layers.Convolution2D(32, 1, 1, border_mode='same', subsample=(1, 1), activation='relu')(x)
+    x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1), activation='relu')(x)
 
     x = layers.Reshape((DISC_SOFTMAX_OUTPUT_DIM, ))(x)
     return layers.Activation('softmax', name='disc_softmax')(x)
