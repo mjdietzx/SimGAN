@@ -95,8 +95,8 @@ def discriminator_network(input_image_tensor):
     x = layers.Convolution2D(2, 1, 1, border_mode='same', subsample=(1, 1), activation='relu')(x)
 
     # here one feature map corresponds to `is_real` and the other to `is_refined`,
-    # and the custom loss function is then `tf.nn.softmax_cross_entropy_with_logits`
-    return layers.Reshape((2, -1))(x)
+    # and the custom loss function is then `tf.nn.sparse_softmax_cross_entropy_with_logits`
+    return layers.Reshape((-1, 2))(x)
 
 
 def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=None, discriminator_model_path=None):
@@ -136,6 +136,8 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     # the adversarial loss function is the sum of the cross-entropy losses over the local patches
     #
     def local_adversarial_loss(y_true, y_pred):
+        # y_pred has shape (batch_size, # of local patches, 2), but really we just want to average over the local
+        # patches and batch size so we can reshape to (batch_size * # of local patches, 2)
         y_pred = tf.reshape(y_pred, (-1, 2))
         loss = tf.nn.softmax_cross_entropy_with_logits(labels=y_true, logits=y_pred)
 
@@ -232,14 +234,13 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     else:
         discriminator_model.load_weights(discriminator_model_path)
 
-    # TODO: what is the ideal size for the image history buffer?
-    image_history_buffer = ImageHistoryBuffer((0, img_height, img_width, img_channels), batch_size * 1000, batch_size)
+    # TODO: what is an appropriate size for the image history buffer?
+    image_history_buffer = ImageHistoryBuffer((0, img_height, img_width, img_channels), batch_size * 100, batch_size)
 
     combined_loss = np.zeros(shape=len(combined_model.metrics_names))
     disc_loss_real = np.zeros(shape=len(discriminator_model.metrics_names))
     disc_loss_refined = np.zeros(shape=len(discriminator_model.metrics_names))
 
-    # TODO: I think there is a problem w/ the disc's local adversarial loss
     # see Algorithm 1 in https://arxiv.org/pdf/1612.07828v1.pdf
     for i in range(nb_steps):
         print('Step: {} of {}.'.format(i, nb_steps))
