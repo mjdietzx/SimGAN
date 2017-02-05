@@ -136,8 +136,9 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     # the adversarial loss function is the sum of the cross-entropy losses over the local patches
     #
     def local_adversarial_loss(y_true, y_pred):
-        # y_pred has shape (batch_size, # of local patches, 2), but really we just want to average over the local
-        # patches and batch size so we can reshape to (batch_size * # of local patches, 2)
+        # y_true and y_pred have shape (batch_size, # of local patches, 2), but really we just want to average over
+        # the local patches and batch size so we can reshape to (batch_size * # of local patches, 2)
+        y_true = tf.reshape(y_true, (-1, 2))
         y_pred = tf.reshape(y_pred, (-1, 2))
         loss = tf.nn.softmax_cross_entropy_with_logits(labels=y_true, logits=y_pred)
 
@@ -186,8 +187,9 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
         return img_batch
 
     # the target labels for the cross-entropy loss layer are 0 for every yj (real) and 1 for every xi (refined)
-    y_real = np.array([[1.0, 0.0]] * discriminator_model_output_shape[1] * batch_size)
-    y_refined = np.array([[0.0, 1.0]] * discriminator_model_output_shape[1] * batch_size)
+    y_real = np.array([[[1.0, 0.0]] * discriminator_model_output_shape[1]] * batch_size)
+    y_refined = np.array([[[0.0, 1.0]] * discriminator_model_output_shape[1]] * batch_size)
+    assert y_real.shape == (batch_size, discriminator_model_output_shape[1], 2)
 
     if not refiner_model_path:
         # we first train the Rθ network with just self-regularization loss for 1,000 steps
