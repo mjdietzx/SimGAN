@@ -16,19 +16,22 @@ from keras.preprocessing import image
 import numpy as np
 import tensorflow as tf
 
+from dlutils import plot_image_batch_w_labels
+
 from utils.image_history_buffer import ImageHistoryBuffer
-from utils import plot_images
 
 
 #
 # directories
 #
+
 path = os.path.dirname(os.path.abspath(__file__))
 cache_dir = os.path.join(path, 'cache')
 
 #
 # image dimensions
 #
+
 img_width = 55
 img_height = 35
 img_channels = 1
@@ -36,6 +39,7 @@ img_channels = 1
 #
 # training params
 #
+
 nb_steps = 10000
 batch_size = 512
 k_d = 1  # number of discriminator updates per step
@@ -72,7 +76,7 @@ def refiner_network(input_image_tensor):
     x = layers.Convolution2D(64, 3, 3, border_mode='same', activation='relu')(input_image_tensor)
 
     # the output is passed through 4 ResNet blocks
-    for i in range(4):
+    for _ in range(4):
         x = resnet_block(x)
 
     # the output of the last ResNet block is passed to a 1 × 1 convolutional layer producing 1 feature map
@@ -104,6 +108,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     #
     # define model input and output tensors
     #
+
     synthetic_image_tensor = layers.Input(shape=(img_height, img_width, img_channels))
     refined_image_tensor = refiner_network(synthetic_image_tensor)
 
@@ -115,6 +120,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     #
     # define models
     #
+
     refiner_model = models.Model(input=synthetic_image_tensor, output=refined_image_tensor, name='refiner')
     discriminator_model = models.Model(input=refined_or_real_image_tensor, output=discriminator_output,
                                        name='discriminator')
@@ -127,6 +133,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     #
     # define custom l1 loss function for the refiner
     #
+
     def self_regularization_loss(y_true, y_pred):
         delta = 0.0001  # FIXME: need to figure out an appropriate value for this
         return tf.multiply(delta, tf.reduce_sum(tf.abs(y_pred - y_true)))
@@ -135,6 +142,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     # define custom local adversarial loss (softmax for each image section) for the discriminator
     # the adversarial loss function is the sum of the cross-entropy losses over the local patches
     #
+
     def local_adversarial_loss(y_true, y_pred):
         # y_true and y_pred have shape (batch_size, # of local patches, 2), but really we just want to average over
         # the local patches and batch size so we can reshape to (batch_size * # of local patches, 2)
@@ -147,6 +155,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     #
     # compile models
     #
+
     sgd = optimizers.SGD(lr=0.001)
 
     refiner_model.compile(optimizer=sgd, loss=self_regularization_loss)
@@ -157,6 +166,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     #
     # data generators
     #
+
     datagen = image.ImageDataGenerator(
         preprocessing_function=applications.xception.preprocess_input,
         dim_ordering='tf')
@@ -206,8 +216,10 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
                 print('Saving batch of refined images during pre-training at step: {}.'.format(i))
 
                 synthetic_image_batch = get_image_batch(synthetic_generator)
-                plot_images.plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch),
-                                       os.path.join(cache_dir, figure_name))
+                plot_image_batch_w_labels.plot_batch(
+                    np.concatenate((synthetic_image_batch, refiner_model.predict_on_batch(synthetic_image_batch))),
+                    os.path.join(cache_dir, figure_name),
+                    label_batch=['Synthetic'] * batch_size + ['Refined'] * batch_size)
 
                 print('Refiner model self regularization loss: {}.'.format(gen_loss / log_interval))
                 gen_loss = np.zeros(shape=len(refiner_model.metrics_names))
@@ -226,7 +238,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
             disc_loss = np.add(discriminator_model.train_on_batch(real_image_batch, y_real), disc_loss)
 
             synthetic_image_batch = get_image_batch(synthetic_generator)
-            refined_image_batch = refiner_model.predict(synthetic_image_batch)
+            refined_image_batch = refiner_model.predict_on_batch(synthetic_image_batch)
             disc_loss = np.add(discriminator_model.train_on_batch(refined_image_batch, y_refined), disc_loss)
 
         discriminator_model.save(os.path.join(cache_dir, 'discriminator_model_pre_trained.h5'))
@@ -262,7 +274,7 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
             real_image_batch = get_image_batch(real_generator)
 
             # refine the synthetic images w/ the current refiner
-            refined_image_batch = refiner_model.predict(synthetic_image_batch)
+            refined_image_batch = refiner_model.predict_on_batch(synthetic_image_batch)
 
             # use a history of refined images
             half_batch_from_image_history = image_history_buffer.get_from_image_history_buffer()
@@ -282,8 +294,10 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
             print('Saving batch of refined images at adversarial step: {}.'.format(i))
 
             synthetic_image_batch = get_image_batch(synthetic_generator)
-            plot_images.plot_batch(synthetic_image_batch, refiner_model.predict(synthetic_image_batch),
-                                   os.path.join(cache_dir, figure_name))
+            plot_image_batch_w_labels.plot_batch(
+                np.concatenate((synthetic_image_batch, refiner_model.predict_on_batch(synthetic_image_batch))),
+                os.path.join(cache_dir, figure_name),
+                label_batch=['Synthetic'] * batch_size + ['Refined'] * batch_size)
 
             # log loss summary
             print('Refiner model loss: {}.'.format(combined_loss / (log_interval * k_g * 2)))
