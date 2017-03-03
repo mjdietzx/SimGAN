@@ -115,8 +115,6 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     refined_or_real_image_tensor = layers.Input(shape=(img_height, img_width, img_channels))
     discriminator_output = discriminator_network(refined_or_real_image_tensor)
 
-    combined_output = discriminator_network(refiner_network(synthetic_image_tensor))
-
     #
     # define models
     #
@@ -124,11 +122,18 @@ def adversarial_training(synthesis_eyes_dir, mpii_gaze_dir, refiner_model_path=N
     refiner_model = models.Model(input=synthetic_image_tensor, output=refined_image_tensor, name='refiner')
     discriminator_model = models.Model(input=refined_or_real_image_tensor, output=discriminator_output,
                                        name='discriminator')
+
     # combined must output the refined image along w/ the disc's classification of it for the refiner's self-reg loss
-    combined_model = models.Model(input=synthetic_image_tensor, output=[refined_image_tensor, combined_output],
+    refiner_model_output = refiner_model(synthetic_image_tensor)
+    combined_output = discriminator_model(refiner_model_output)
+    combined_model = models.Model(input=synthetic_image_tensor, output=[refiner_model_output, combined_output],
                                   name='combined')
 
     discriminator_model_output_shape = discriminator_model.output_shape
+
+    print(refiner_model.summary())
+    print(discriminator_model.summary())
+    print(combined_model.summary())
 
     #
     # define custom l1 loss function for the refiner
