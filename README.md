@@ -2,6 +2,17 @@
 Keras implementation of Apple's [Learning from Simulated and Unsupervised Images through Adversarial Training](https://arxiv.org/pdf/1612.07828v1.pdf)
 
 ## Running
+
+Install dlutils from https://github.com/wayaai/deep-learning-utils:
+
+> $ pip install -U git+https://github.com/wayaai/deep-learning-utils.git  
+
+or  
+
+> $ git clone https://github.com/wayaai/deep-learning-utils.git  
+> $ python setup.py install develop
+
+
 ```python
 python3 sim-gan.py PATH_TO_SYNTHESEYES_DATASET PATH_TO_MPII_GAZE_DATASET
 ```
