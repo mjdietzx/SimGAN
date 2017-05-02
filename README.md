@@ -25,6 +25,7 @@ The dataset of real image's used in apple's paper is the [MPIIGaze Dataset](http
 Just download these datasets from the shared s3 links below and un-zip them.
 * Syntheses Eyes: https://s3-us-west-1.amazonaws.com/waya-ai-sim-gan/syntheseyes_data.zip
 * MPII Gaze Dataset: https://s3-us-west-1.amazonaws.com/waya-ai-sim-gan/MPII_Gaze_Dataset.zip
+* 50000 Unity Eyes: https://www.kaggle.com/4quant/eye-gaze
 
 ## Details
 Implementation of `3.1 Appearance-based Gaze Estimation` on UnityEyes and MPIIGaze datasets as described in paper.
@@ -34,6 +35,10 @@ Implementation of `3.1 Appearance-based Gaze Estimation` on UnityEyes and MPIIGa
 
 ## Implementation
 This is meant to be a light-weight and clean implementation that is easy to understand - no deep shit. It can also be used as a resource to understand GANs in general and how they can be implemented.
+
+## Running Online
+
+You can see a interactive Jupyter Notebook version of this script with training data on [Kaggle](https://www.kaggle.com/kmader/d/4quant/eye-gaze/simgan-notebook/) or just the [raw training set](https://www.kaggle.com/4quant/eye-gaze)
 
 ## About waya.ai
 Waya.ai is a company whose vision is a world where medical conditions are addressed early on, in their infancy. This approach will shift the health-care industry from a constant fire-fight against symptoms to a preventative approach where root causes are addressed and fixed. Our first step to make realize this vision is easy, accurate and available diagnosis. Please get in contact with me if this resonates with you!
