@@ -22,9 +22,6 @@ In apple's paper they use [Unity Eyes](http://www.cl.cam.ac.uk/research/rainbow/
 The dataset of real image's used in apple's paper is the [MPIIGaze Dataset](https://www.mpi-inf.mpg.de/departments/computer-vision-and-multimodal-computing/research/gaze-based-human-computer-interaction/appearance-based-gaze-estimation-in-the-wild-mpiigaze/). They use the normalized images provided in this dataset which are stored in matlab files. It was a bit of a pain to get these in an easily usable form so I'm sharing the ready to go datasets on s3.
 
 ## Ready to go datasets
-Just download these datasets from the shared s3 links below and un-zip them.
-* Syntheses Eyes: https://s3-us-west-1.amazonaws.com/waya-ai-sim-gan/syntheseyes_data.zip
-* MPII Gaze Dataset: https://s3-us-west-1.amazonaws.com/waya-ai-sim-gan/MPII_Gaze_Dataset.zip
 * 50000 Unity Eyes: https://www.kaggle.com/4quant/eye-gaze
 
 ## Details
